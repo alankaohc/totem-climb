@@ -37,12 +37,18 @@ function createGame(players, options, rng) {
     targets: {},
     turn: null,
     log: [],
+    seq: 0, // 每筆紀錄的流水號，前端靠它判斷剛發生的是哪一步、要播哪段動畫
     lastRound: null,
     tiebreakNext: null,
     winners: null,
   };
   startRound(state, rng, true);
   return state;
+}
+
+function pushLog(state, entry) {
+  state.seq = (state.seq || 0) + 1;
+  state.log.push({ seq: state.seq, ...entry });
 }
 
 function seatIndex(state, id) {
@@ -88,7 +94,8 @@ function startRound(state, rng, isFirst) {
   }
   state.turn = state.seats[state.firstSeat].id;
   state.phase = 'playing';
-  state.log = [{ kind: 'round', text: state.tiebreak ? `加賽開始` : `第 ${state.round} 局開始` }];
+  state.log = [];
+  pushLog(state, { kind: 'round', text: state.tiebreak ? `加賽開始` : `第 ${state.round} 局開始` });
 }
 
 // 一張牌目前可以作用的圖騰；mode: none（不需選）/ one / two（交換）
@@ -225,7 +232,7 @@ function playMove(state, playerId, payload, opts = {}) {
   hand.splice(hand.indexOf(card), 1);
   state.played[playerId].push(card.type);
   state.hasPlayed[playerId] = true;
-  state.log.push({
+  pushLog(state, {
     kind: 'move',
     player: playerId,
     card: card.type,
@@ -252,7 +259,7 @@ function advance(state, lastId) {
     if (!hasAnyMove(state, id)) {
       // 理論上不會發生；保險起見，沒有合法動作就丟掉一張牌並跳過
       state.hands[id].shift();
-      state.log.push({ kind: 'skip', player: id, text: `${seatName(state, id)} 沒有可以出的牌，跳過` });
+      pushLog(state, { kind: 'skip', player: id, text: `${seatName(state, id)} 沒有可以出的牌，跳過` });
       if (roundIsOver(state)) return endRound(state);
       continue;
     }
@@ -287,7 +294,7 @@ function endRound(state) {
     removed: state.removed.slice(),
     results,
   };
-  state.log.push({ kind: 'round', text: '本局結束，翻開目標卡' });
+  pushLog(state, { kind: 'round', text: '本局結束，翻開目標卡' });
 
   const regularDone = state.round >= state.totalRounds;
   if (!regularDone) {

@@ -11,7 +11,8 @@ const game = require('./game');
 const bot = require('./bot');
 
 const PORT = Number(process.env.PORT) || 3000;
-const BOT_DELAY_MS = Number(process.env.BOT_DELAY_MS ?? 1100);
+// 前端每一步動畫約 3 秒，電腦玩家多等一下，讓大家看清楚再出下一步
+const BOT_DELAY_MS = Number(process.env.BOT_DELAY_MS ?? 4500);
 const AWAY_AUTOPLAY_MS = Number(process.env.AWAY_AUTOPLAY_MS ?? 30000);
 const EMPTY_ROOM_TTL_MS = 10 * 60 * 1000;
 const MAX_PLAYERS = 4;

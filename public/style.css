@@ -268,14 +268,14 @@ main { max-width: 1180px; margin: 0 auto; padding: 16px; }
 /* 圖騰柱：整個畫面的主角 */
 .pole {
   position: relative;
-  padding: 14px 14px 14px 46px;
+  padding: 14px 40px 14px 46px; /* 右側留空間畫移動軌跡 */
   border-radius: 18px;
   background:
     repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.06) 0 3px, transparent 3px 11px),
     linear-gradient(180deg, #6b4428, #4a2d19);
   box-shadow: inset 0 0 0 3px #2e1b0e, inset 0 10px 30px rgba(0, 0, 0, 0.35), 0 18px 40px rgba(0, 0, 0, 0.35);
 }
-.pole ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.pole ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; position: relative; }
 .pole li { position: relative; }
 .pole .rank {
   position: absolute;
@@ -315,6 +315,24 @@ main { max-width: 1180px; margin: 0 auto; padding: 16px; }
   background: rgba(0, 0, 0, 0.28);
   color: #fff;
 }
+/* 移動動畫與軌跡 */
+.pole .tiki.moving {
+  z-index: 4;
+  box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.22), 0 0 0 3px var(--torch), 0 10px 26px rgba(0, 0, 0, 0.5);
+}
+.pole .tiki.last-moved {
+  box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.22), inset 0 2px 0 rgba(255, 255, 255, 0.25), 0 0 0 2px rgba(246, 162, 58, 0.75);
+}
+.trail { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; z-index: 3; color: var(--torch); }
+.trail path { fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; }
+.trail circle { fill: currentColor; }
+.trail:not(.live) { opacity: 0.7; }
+.burn-ghost { position: absolute; z-index: 6; pointer-events: none; }
+.burn-ghost .tiki { height: 100%; }
+.burned .tiki.just { opacity: 0.8; filter: none; box-shadow: 0 0 0 2px var(--torch); }
+.last-move { margin: 0 0 10px; min-height: 1.5em; font-size: var(--step--1); color: var(--foam-dim); }
+.last-move.live { color: var(--torch); font-weight: 700; }
+
 .burned { margin-top: 12px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; color: #e9cfa8; font-size: 0.8rem; }
 
 .target h3, .hand h3, .log h3 { font-size: var(--step-0); margin: 0 0 10px; }

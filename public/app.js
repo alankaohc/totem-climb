@@ -26,6 +26,11 @@
   const SLOT_PTS = [9, 5, 2];
   const SLOT_NEED = ['第 1 名', '前 2 名', '前 3 名'];
 
+  // 動畫設定：每一步花多久、移動的圖騰往右彎出去多少
+  const MOVE_MS = 3000;
+  const BULGE = 24;
+  const EASE = 'cubic-bezier(.45,.05,.25,1)';
+
   const $app = document.getElementById('app');
   const $overlay = document.getElementById('overlay');
   const $toast = document.getElementById('toast');
@@ -64,6 +69,9 @@
     session: loadSession(),
     room: null,
     sel: null, // { uid, picks: [] }
+    animating: false, // 正在播放某一步的動畫
+    trail: null, // 最近一步的移動軌跡
+    gen: 0, // 離開房間等情況時遞增，丟掉還沒處理的舊狀態
     overlay: null,
     connected: false,
     everConnected: false,
@@ -163,17 +171,82 @@
     renderConn();
   });
 
+  // 狀態更新排隊處理：一步的動畫播完，才換下一個狀態
+  const queue = [];
+  let pumping = false;
+
   socket.on('room:state', (r) => {
-    store.room = r;
-    const game = r.game;
-    if (store.sel) {
-      const still = game && myTurn() && game.myHand.some((c) => c.uid === store.sel.uid);
-      if (!still) store.sel = null;
-    }
-    render();
+    queue.push({ room: r, gen: store.gen });
+    pump();
   });
 
+  async function pump() {
+    if (pumping) return;
+    pumping = true;
+    while (queue.length) {
+      const item = queue.shift();
+      if (item.gen !== store.gen) continue;
+      // 落後太多（例如分頁放在背景）就直接跳到最新狀態，不補播動畫
+      const animate = queue.length < 2 && !document.hidden && !reduceMotion.matches;
+      await applyState(item.room, animate, item.gen);
+    }
+    pumping = false;
+  }
+
+  function resetStream() {
+    store.gen += 1;
+    queue.length = 0;
+    store.animating = false;
+  }
+
+  async function applyState(r, animate, gen) {
+    const prev = store.room;
+    const move = detectMove(prev, r);
+    store.room = r;
+    if (!r.game) store.trail = null;
+    else if (move === 'many') store.trail = null;
+    else if (move) store.trail = move;
+    if (store.sel) {
+      const still = r.game && myTurn() && r.game.myHand.some((c) => c.uid === store.sel.uid);
+      if (!still) store.sel = null;
+    }
+    if (move && move !== 'many' && animate && store.screen === 'game') {
+      store.animating = true;
+      const before = measurePole();
+      renderGame({ animating: true });
+      await playMove(move, before);
+      if (gen !== store.gen) return;
+      store.animating = false;
+    }
+    render();
+  }
+
+  // 比較前後兩個狀態，找出剛剛發生的那一步
+  function detectMove(prev, next) {
+    const a = prev && prev.game;
+    const b = next && next.game;
+    if (!a || !b || a.round !== b.round || a.tiebreak !== b.tiebreak) return null;
+    const lastSeq = a.log.length ? a.log[a.log.length - 1].seq || 0 : 0;
+    const fresh = b.log.filter((l) => (l.seq || 0) > lastSeq && l.kind === 'move');
+    if (fresh.length === 0) return null;
+    if (fresh.length > 1) return 'many';
+    const m = fresh[0];
+    const item = (t, bend) => ({ tiki: t, from: a.line.indexOf(t), to: b.line.indexOf(t), bend });
+    let items = [];
+    if (m.card === 'swap') items = [item(m.tikis[0], 1), item(m.tikis[1], 0.45)];
+    else if (m.card !== 'toast') items = [item(m.tikis[0], 1)];
+    return {
+      seq: m.seq,
+      round: b.round,
+      tiebreak: b.tiebreak,
+      card: m.card,
+      items,
+      burned: m.card === 'toast' ? m.tikis[0] : null,
+    };
+  }
+
   socket.on('session:replaced', () => {
+    resetStream();
     store.room = null;
     store.screen = null;
     render();
@@ -181,6 +254,7 @@
   });
 
   socket.on('room:removed', () => {
+    resetStream();
     saveSession(null);
     store.room = null;
     render();
@@ -190,6 +264,7 @@
   // ---------- 畫面 ----------
 
   function render() {
+    if (store.animating) return; // 動畫結束後會再畫一次
     if (!store.room) renderHome();
     else if (!store.room.game) renderLobby();
     else renderGame();
@@ -273,27 +348,133 @@
 
   function measurePole() {
     const map = new Map();
-    $app.querySelectorAll('.pole .tiki').forEach((el) => map.set(el.dataset.id, el.getBoundingClientRect().top));
+    $app.querySelectorAll('.pole ol .tiki').forEach((el) => {
+      const r = el.getBoundingClientRect();
+      map.set(el.dataset.id, { top: r.top, left: r.left, width: r.width, height: r.height });
+    });
     return map;
   }
 
-  function animatePole(before) {
-    if (reduceMotion.matches || before.size === 0) return;
-    $app.querySelectorAll('.pole .tiki').forEach((el) => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // 播放一步：被移動的圖騰沿弧線往右繞過去，其他圖騰跟著滑動，同時畫出軌跡
+  async function playMove(move, before) {
+    const ol = $app.querySelector('.pole ol');
+    if (!ol) return;
+    const bends = new Map(move.items.map((it) => [it.tiki, it.bend]));
+    const runs = [sleep(MOVE_MS)];
+    ol.querySelectorAll('.tiki').forEach((el) => {
       const old = before.get(el.dataset.id);
-      if (old === undefined) return;
-      const dy = old - el.getBoundingClientRect().top;
+      if (!old) return;
+      const dy = old.top - el.getBoundingClientRect().top;
       if (Math.abs(dy) < 1) return;
-      el.style.transition = 'none';
-      el.style.transform = `translateY(${dy}px)`;
-      el.getBoundingClientRect();
-      el.style.transition = 'transform 420ms cubic-bezier(.2,.8,.2,1)';
-      el.style.transform = '';
+      const bulge = (bends.get(el.dataset.id) || 0) * BULGE;
+      const frames = [];
+      for (let k = 0; k <= 16; k++) {
+        const t = k / 16;
+        const x = 4 * bulge * t * (1 - t);
+        frames.push({ offset: t, transform: `translate(${x.toFixed(2)}px, ${(dy * (1 - t)).toFixed(2)}px)` });
+      }
+      if (bends.has(el.dataset.id)) el.classList.add('moving');
+      runs.push(el.animate(frames, { duration: MOVE_MS, easing: EASE }).finished.catch(() => {}));
     });
+    drawTrail(move, true, runs);
+    if (move.burned) runs.push(burnGhost(move.burned, before));
+    await Promise.all(runs);
   }
 
-  function renderGame() {
-    const before = store.screen === 'game' ? measurePole() : new Map();
+  // 軌跡：從原本的名次畫一條往右彎的弧線到新的名次
+  function drawTrail(move, animate, runs) {
+    const ol = $app.querySelector('.pole ol');
+    if (!ol) return;
+    const lis = Array.from(ol.children).filter((el) => el.tagName === 'LI');
+    const items = move.items.filter((it) => it.from !== it.to && it.from >= 0 && it.to >= 0 && it.from < lis.length && it.to < lis.length);
+    if (!items.length) return;
+    const ns = 'http://www.w3.org/2000/svg';
+    const w = ol.clientWidth;
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', animate ? 'trail live' : 'trail');
+    svg.setAttribute('width', String(w + BULGE * 2 + 16));
+    svg.setAttribute('height', String(ol.clientHeight));
+    svg.setAttribute('aria-hidden', 'true');
+    const markerId = `trail-arrow-${move.seq}-${animate ? 'a' : 's'}`;
+    svg.innerHTML = `<defs><marker id="${markerId}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" /></marker></defs>`;
+    const cy = (i) => lis[i].offsetTop + lis[i].offsetHeight / 2;
+    const x = w + 4;
+    for (const it of items) {
+      const y1 = cy(it.from);
+      const y2 = cy(it.to);
+      const dot = document.createElementNS(ns, 'circle');
+      dot.setAttribute('cx', String(x));
+      dot.setAttribute('cy', String(y1));
+      dot.setAttribute('r', '4');
+      const path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', `M${x} ${y1} Q${x + 2 * BULGE * it.bend} ${(y1 + y2) / 2} ${x} ${y2}`);
+      svg.append(dot, path);
+      if (animate) {
+        const len = path.getTotalLength();
+        path.style.strokeDasharray = String(len);
+        path.style.strokeDashoffset = String(len);
+        runs.push(
+          path
+            .animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: MOVE_MS, easing: EASE, fill: 'forwards' })
+            .finished.catch(() => {})
+        );
+      } else {
+        path.setAttribute('marker-end', `url(#${markerId})`);
+      }
+    }
+    ol.appendChild(svg);
+  }
+
+  // 燒毀：最底部的圖騰先閃著火光，再縮小飛進「已燒毀」區
+  function burnGhost(id, before) {
+    const pole = $app.querySelector('.pole');
+    const old = before.get(id);
+    if (!pole || !old) return Promise.resolve();
+    const pr = pole.getBoundingClientRect();
+    const ghost = document.createElement('div');
+    ghost.className = 'burn-ghost';
+    ghost.innerHTML = tiki(id);
+    Object.assign(ghost.style, {
+      left: `${old.left - pr.left}px`,
+      top: `${old.top - pr.top}px`,
+      width: `${old.width}px`,
+      height: `${old.height}px`,
+    });
+    pole.appendChild(ghost);
+    const target = pole.querySelector(`.burned .tiki[data-id="${id}"]`);
+    let end = 'translate(0px, 40px) scale(0.5)';
+    if (target) {
+      const tr = target.getBoundingClientRect();
+      const dx = tr.left + tr.width / 2 - (old.left + old.width / 2);
+      const dy = tr.top + tr.height / 2 - (old.top + old.height / 2);
+      end = `translate(${dx}px, ${dy}px) scale(${tr.width / old.width}, ${tr.height / old.height})`;
+      target.style.opacity = '0';
+    }
+    const fire = 'drop-shadow(0 0 12px rgba(255, 130, 30, 0.95)) brightness(1.25)';
+    const ember = 'drop-shadow(0 0 4px rgba(255, 130, 30, 0.6)) brightness(1.05)';
+    const anim = ghost.animate(
+      [
+        { offset: 0, transform: 'none', filter: 'none', opacity: 1 },
+        { offset: 0.12, transform: 'none', filter: fire, opacity: 1 },
+        { offset: 0.24, transform: 'none', filter: ember, opacity: 1 },
+        { offset: 0.36, transform: 'none', filter: fire, opacity: 1 },
+        { offset: 0.48, transform: 'none', filter: ember, opacity: 1 },
+        { offset: 0.6, transform: 'none', filter: fire, opacity: 1 },
+        { offset: 1, transform: end, filter: 'grayscale(0.8)', opacity: 0.4 },
+      ],
+      { duration: MOVE_MS, easing: 'ease-in-out', fill: 'forwards' }
+    );
+    return anim.finished
+      .catch(() => {})
+      .then(() => {
+        ghost.remove();
+        if (target) target.style.opacity = '';
+      });
+  }
+
+  function renderGame(opts = {}) {
     store.screen = 'game';
     const r = room();
     const game = g();
@@ -303,6 +484,11 @@
     const legal = new Set(picking ? selCard.tikis : []);
     const picks = store.sel ? store.sel.picks : [];
     const target = game.myTarget || [];
+    const trail =
+      store.trail && store.trail.round === game.round && store.trail.tiebreak === game.tiebreak ? store.trail : null;
+    const showTrail = trail && !opts.animating;
+    const movedIds = new Set(showTrail ? trail.items.filter((it) => it.from !== it.to).map((it) => it.tiki) : []);
+    const lastMove = game.log.filter((l) => l.kind === 'move').pop();
 
     const roundLabel = game.tiebreak ? '加賽' : `第 ${game.round}／${game.totalRounds} 局`;
     const turnText = game.phase !== 'playing' ? '本局結束' : mine ? '輪到你了' : `輪到 ${esc(seatName(game.turn))}`;
@@ -323,7 +509,12 @@
     const poleItems = game.line
       .map((id, i) => {
         const slot = target.indexOf(id);
-        const cls = [legal.has(id) ? 'legal' : '', picks.includes(id) ? 'picked' : '', slot !== -1 ? 'mine' : ''].join(' ');
+        const cls = [
+          legal.has(id) ? 'legal' : '',
+          picks.includes(id) ? 'picked' : '',
+          slot !== -1 ? 'mine' : '',
+          movedIds.has(id) ? 'last-moved' : '',
+        ].join(' ');
         const attrs = [
           `data-action="pick-tiki"`,
           slot !== -1 ? `data-slot="${SLOT_PTS[slot]} 分"` : '',
@@ -333,7 +524,9 @@
       })
       .join('');
     const burned = game.removed.length
-      ? `<div class="burned">已燒毀 ${game.removed.map((id) => tiki(id, { mini: true, cls: 'gone' })).join('')}</div>`
+      ? `<div class="burned">已燒毀 ${game.removed
+          .map((id) => tiki(id, { mini: true, cls: `gone ${showTrail && trail.burned === id ? 'just' : ''}` }))
+          .join('')}</div>`
       : '';
 
     let targetHTML;
@@ -354,7 +547,8 @@
     let hint = '';
     let confirm = '';
     if (game.phase === 'playing') {
-      if (!mine) hint = game.myHand.length ? `等 ${esc(seatName(game.turn))} 出牌…` : '你的牌打完了，等其他人出牌。';
+      if (store.animating && mine) hint = '輪到你了，這一步播完就能出牌。';
+      else if (!mine) hint = game.myHand.length ? `等 ${esc(seatName(game.turn))} 出牌…` : '你的牌打完了，等其他人出牌。';
       else if (!selCard) hint = '選一張牌。';
       else if (selCard.mode === 'none') {
         const bottom = game.line[game.line.length - 1];
@@ -370,7 +564,7 @@
       .map((c) => {
         const playable = c.mode === 'none' ? c.playable : c.mode === 'two' ? c.tikis.length >= 2 : c.tikis.length > 0;
         const why = c.type === 'toast' && !c.playable ? '每局第一張不能出燒毀' : '';
-        const disabled = !mine || !playable || store.pending;
+        const disabled = !mine || !playable || store.pending || store.animating;
         const desc = c.type === 'toast' && !c.playable ? '每局第一張不能出' : CARD[c.type].desc;
         return `<button class="acard ${store.sel && store.sel.uid === c.uid ? 'selected' : ''}" data-action="pick-card" data-uid="${c.uid}" ${disabled ? 'disabled' : ''} ${why ? `title="${why}"` : ''}>
           <span class="an">${CARD[c.type].name}</span><span class="ad">${desc}</span></button>`;
@@ -398,7 +592,10 @@
           <section class="area-log log"><h3>紀錄</h3><ol>${log}</ol></section>
         </div>
         <div class="col col-mid">
-          <section class="area-pole" aria-label="圖騰排名"><div class="pole ${picking ? 'picking' : ''}"><ol>${poleItems}</ol>${burned}</div></section>
+          <section class="area-pole" aria-label="圖騰排名">
+            <p class="last-move ${opts.animating ? 'live' : ''}">${lastMove ? esc(lastMove.text) : '這局還沒有人出牌'}</p>
+            <div class="pole ${picking ? 'picking' : ''}"><ol>${poleItems}</ol>${burned}</div>
+          </section>
         </div>
         <div class="col col-right">
           <section class="area-target sheet target">${targetHTML}</section>
@@ -409,7 +606,7 @@
           </section>
         </div>
       </div>`;
-    animatePole(before);
+    if (showTrail) drawTrail(trail, false, []);
   }
 
   function resultsHTML(game) {
@@ -433,7 +630,7 @@
   }
 
   function renderOverlay() {
-    const game = g();
+    const game = store.animating ? null : g();
     let html = '';
     if (game && game.phase === 'roundEnd') {
       const canNext = isHost() || hostAway();
@@ -545,20 +742,21 @@
       const game = g();
       if (game && game.phase !== 'gameOver' && !window.confirm('離開後由電腦接手你的位置，確定要離開嗎？')) return;
       await emit('room:leave');
+      resetStream();
       saveSession(null);
       store.room = null;
       store.screen = null;
       render();
     },
     'pick-card'(el) {
-      if (!myTurn() || store.pending) return;
+      if (!myTurn() || store.pending || store.animating) return;
       const uid = el.dataset.uid;
       store.sel = store.sel && store.sel.uid === uid ? null : { uid, picks: [] };
       render();
     },
     'pick-tiki'(el) {
       const game = g();
-      if (!store.sel || !game) return;
+      if (!store.sel || !game || store.animating) return;
       const card = game.myHand.find((c) => c.uid === store.sel.uid);
       const id = el.dataset.id;
       if (!card || !card.tikis.includes(id)) return;
