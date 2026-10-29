@@ -1,0 +1,22 @@
+{
+  "name": "totem-climb",
+  "version": "1.0.0",
+  "description": "圖騰登頂：九尊圖騰搶第一的線上多人卡牌遊戲",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.1"
+  },
+  "private": true,
+  "engines": {
+    "node": "22.x"
+  }
+}

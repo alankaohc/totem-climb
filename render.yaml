@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: totem-climb
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true

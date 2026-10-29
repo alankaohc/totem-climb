@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f4c4f" />
+    <meta name="description" content="九尊圖騰搶第一，和朋友線上對戰的輕策略卡牌遊戲。" />
+    <title>圖騰登頂</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗿</text></svg>" />
+  </head>
+  <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="g-star" viewBox="0 0 24 24">
+        <path d="M12 2.8l2.5 6.3 6.8.4-5.3 4.3 1.8 6.6L12 16.6l-5.8 3.8 1.8-6.6-5.3-4.3 6.8-.4z" fill="currentColor" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="g-bone" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 12h14" />
+          <path d="M18 12l3.5-3.2v6.4z" fill="currentColor" />
+          <path d="M4 12L1.8 9.2M4 12l-2.2 2.8" />
+          <path d="M7.5 8.2L9 12l-1.5 3.8M11 7.4l1.6 4.6-1.6 4.6M14.5 8.2L16 12l-1.5 3.8" />
+        </g>
+      </symbol>
+      <symbol id="g-shell" viewBox="0 0 24 24">
+        <path transform="translate(12 11.5) scale(1.45) translate(-12 -11.5)" d="M11 12a1 1 0 0 1 2 0a2 2 0 0 1-4 0a3 3 0 0 1 6 0a4 4 0 0 1-8 0a5 5 0 0 1 10 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+      </symbol>
+    </svg>
+
+    <div id="conn" class="conn" hidden></div>
+    <main id="app" aria-live="polite"></main>
+    <div id="overlay" class="overlay" hidden></div>
+    <div id="toast" class="toast" role="status" hidden></div>
+
+    <template id="rules-tpl">
+      <div class="sheet rules" role="dialog" aria-modal="true" aria-labelledby="rules-title">
+        <h2 id="rules-title">怎麼玩</h2>
+        <p>九尊圖騰排成一列，越上面名次越前。每局你會暗中拿到一張目標卡，上面有三尊圖騰：</p>
+        <ul>
+          <li><b>最上面那尊</b>：本局結束時排第 1 名，得 9 分。</li>
+          <li><b>中間那尊</b>：排在前 2 名，得 5 分。</li>
+          <li><b>最下面那尊</b>：排在前 3 名，得 2 分。</li>
+        </ul>
+        <p>輪到你時必須打出一張手牌，打出的牌這局不能再用：</p>
+        <ul>
+          <li><b>上升 1／2／3</b>：任選一尊往上走，一定要走滿格數，被越過的往下移。</li>
+          <li><b>推到底</b>：任選一尊移到最底部。</li>
+          <li><b>燒毀</b>：移除最底部那尊，這局不會回來。每局你的第一張牌不能是燒毀。</li>
+          <li><b>交換、下降 2</b>：只在變體規則中出現。</li>
+        </ul>
+        <p>只剩 3 尊，或所有人的牌都打完，這局就結束並計分。總局數等於玩家人數（兩人打 4 局），總分最高的人獲勝；同分就加賽一局。</p>
+        <button class="btn" data-action="close-overlay">知道了</button>
+      </div>
+    </template>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
